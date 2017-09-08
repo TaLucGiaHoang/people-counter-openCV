@@ -1,3 +1,6 @@
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <opencv/cv.h>
 #include <opencv/highgui.h>
 #include <opencv/cvaux.h>
@@ -143,30 +146,34 @@ CvPoint center [50];
 
 void reject_small_and_large_object(IplImage* src, IplImage* dst, IplImage* circleImage, CvPoint* center, int &numOfCenters, CvMemStorage* storage);
 
+void print_help()
+{
+	printf( 
+	"Control keys:\n"
+		"\t- a : auto update codebook\n"
+		"\t- c : clear codebook\n"
+		"\t- u : update codebook\n"
+		"\t- 1 : foreground\n"
+		"\t- 2 : connected component\n"
+		"\t- 3 : circle\n"
+		"\t- 4 : motion detection\n"
+		"\t- 5 : HSV\n"
+		"\t- 6 : RGB\n"
+		"\t- s : save current frame\n"
+		"\t- r : reset and clear memory\n"
+		"\t- t : display trackbars\n"
+		"\t- q : display process window\n"
+		"\t- w : display color window\n"
+		"\t- v : detection mode: 1-vertical\n"
+		"\t- h : detection mode: 2-horizontal\n"
+		"\t- p : pause\n"
 
+
+);
+}
 int main(int argc, char *argv[]) {
-	if (capture = cvCreateCameraCapture(0)){
-		// adjust width, height of camera
-		//cvSetCaptureProperty(capture, CV_CAP_PROP_FRAME_WIDTH, CamWidth);
-		//cvSetCaptureProperty(capture, CV_CAP_PROP_FRAME_HEIGHT, CamHeight);*/
-		;
-	}
-	else {
-		capture = cvCreateFileCapture("sample-video.avi");//("hoang_19-5-2016_24fps.avi");//("Quang,Hoang_23-5-2016.avi");
-		//capture = cvCreateFileCapture("Quang,Hoang_23-5-2016.avi");
-		maxFrame = (int)cvGetCaptureProperty(capture, CV_CAP_PROP_FRAME_COUNT);
-		useAVIfile = true;
-		fps = cvGetCaptureProperty(capture, CV_CAP_PROP_FPS);
-		printf("fps: %d\n", fps);
-		cvSetCaptureProperty(capture, CV_CAP_PROP_FRAME_WIDTH, 320);
-		cvSetCaptureProperty(capture, CV_CAP_PROP_FRAME_HEIGHT, 240);
-	}
-	nframes = 0;
-	nframesToLearnBG = LEARNING_TIME;
-	
-	//initialize codebook	
-	model = cvCreateBGCodeBookModel();
-	
+
+	/* Codebook parameters */
 	bool auto_update = false;
 	bool update = false, clear = false;
 	bool temp_image = false;
@@ -178,16 +185,54 @@ int main(int argc, char *argv[]) {
 	bool save = false;
 	bool color_window = true;
 
+	print_help();
+
+	/* Record video output */
+	CvVideoWriter* writer = 0;
+#ifdef DEBUG
+	CvVideoWriter *writer0 = 0, *writer1 = 0, *writer2 = 0, *writer3 = 0, *writer4 = 0;
+	IplImage *tempImage0 = 0, *tempImage1 = 0, *tempImage2 = 0, *tempImage3 = 0, *tempImage4 = 0;
+#endif
+	int fcc = CV_FOURCC('D', 'I', 'V', '3');
+
+/*	if (capture = cvCreateCameraCapture(0)){
+		printf("Capture from Camera\n");
+		if (!capture){
+			perror("ERROR cvCreateFileCapture");
+			return -1;
+		}
+		// adjust width, height of camera
+		//cvSetCaptureProperty(capture, CV_CAP_PROP_FRAME_WIDTH, CamWidth);
+		//cvSetCaptureProperty(capture, CV_CAP_PROP_FRAME_HEIGHT, CamHeight);
+		
+	}
+	else */{
+		printf("Capture from Video\n");
+		capture = cvCreateFileCapture("sample-video.avi");//("hoang_19-5-2016_24fps.avi");//("Quang,Hoang_23-5-2016.avi");
+		if(!capture){
+			perror("ERROR cvCreateFileCapture");
+			return -1;
+		}
+		
+		/* Get video information */
+		maxFrame = (int)cvGetCaptureProperty(capture, CV_CAP_PROP_FRAME_COUNT);
+		useAVIfile = true;
+		fps = cvGetCaptureProperty(capture, CV_CAP_PROP_FPS);
+		printf("fps: %d\n", fps);
+		cvSetCaptureProperty(capture, CV_CAP_PROP_FRAME_WIDTH, 320);
+		cvSetCaptureProperty(capture, CV_CAP_PROP_FRAME_HEIGHT, 240);
+	}
+	
+	//initialize codebook	
+	nframes = 0;
+	nframesToLearnBG = LEARNING_TIME;
+	model = cvCreateBGCodeBookModel();	
+
 	cvNamedWindow("Camera");
 	cvSetMouseCallback("Camera", on_mouse, 0);
 	control_trackbar();
 	threshold_trackbar();
 
-	CvVideoWriter* writer = 0;
-	//CvVideoWriter  *writer0 = 0,		*writer1 = 0,		*writer2 = 0,		*writer3 = 0,		*writer4 = 0;
-	//IplImage	*tempImage0 = 0, *tempImage1 = 0, *tempImage2 = 0;// *tempImage3 = 0, *tempImage4 = 0;
-	int fcc = CV_FOURCC('D', 'I', 'V', '3');
-	
 	while (1)
 	{
 		if (!pause) {
@@ -201,7 +246,7 @@ int main(int argc, char *argv[]) {
 			InitImages(sz);
 
 			//Set color thresholds to default values
-			model->cbBounds[0] = model->cbBounds[1] = model->cbBounds[2] = 10;	//10
+			model->cbBounds[0] = model->cbBounds[1] = model->cbBounds[2] = 10;
 			model->modMin[0] = 70;	model->modMax[0] = 70;//H			
 			model->modMin[1] = 10;	model->modMax[1] = 40;	//S
 			model->modMin[2] = modMin;	model->modMax[2] = modMax;	//V
@@ -223,7 +268,8 @@ int main(int argc, char *argv[]) {
 			}
 			writer = cvCreateVideoWriter("Video Record.avi", fcc, 24, sz);
 			
-			/*
+			/* Record processing */	
+#ifdef DEBUG
 			writer0 = cvCreateVideoWriter("foreground.avi", fcc, 24, sz);
 			writer1 = cvCreateVideoWriter("connected component.avi", fcc, 24, sz);
 			writer2 = cvCreateVideoWriter("circle.avi", fcc, 24, sz);
@@ -235,7 +281,7 @@ int main(int argc, char *argv[]) {
 			tempImage2 = cvCreateImage(sz, 8, 3);
 			//tempImage3 = cvCreateImage(sz, 8, 3);
 			//tempImage4 = cvCreateImage(sz, 8, 3);
-			*/
+#endif
 		}
 
 		if (rawImage)
@@ -281,7 +327,7 @@ int main(int argc, char *argv[]) {
 				cvResetImageROI(rawImage);
 			}
 
-			//show on screen
+			/* Display on screen */
 			cvZero(tempImage);
 			switch (window_mode)
 			{
@@ -319,10 +365,9 @@ int main(int argc, char *argv[]) {
 			if (color_window)	cvShowImage("Camera", rawImage);
 			else cvDestroyWindow("Camera");
 			
-			cvWriteFrame(writer, rawImage);
-			
-						
-			/*
+			cvWriteFrame(writer, rawImage);								
+
+#ifdef DEBUG
 			cvCvtColor(ImaskCodeBook, tempImage0, CV_GRAY2BGR);
 			cvCvtColor(ImaskCodeBookCC, tempImage1, CV_GRAY2BGR);
 			cvCvtColor(circleImage, tempImage2, CV_GRAY2BGR);
@@ -331,7 +376,7 @@ int main(int argc, char *argv[]) {
 			cvWriteFrame(writer2, tempImage2);// circleImage);
 			cvWriteFrame(writer3, motion);
 			cvWriteFrame(writer4, hsvImage);
-			*/
+#endif			
 			
 			if (auto_update) {
 				current_time = (double)clock() / CLOCKS_PER_SEC; // get current time in seconds
@@ -452,13 +497,14 @@ int main(int argc, char *argv[]) {
 	}
 	
 	cvReleaseVideoWriter(&writer);
-	/*
+	
+#ifdef DEBUG
 	cvReleaseVideoWriter(&writer0);
 	cvReleaseVideoWriter(&writer1);
 	cvReleaseVideoWriter(&writer2);
 	cvReleaseVideoWriter(&writer3);
 	cvReleaseVideoWriter(&writer4);
-	*/
+#endif
 	return 0;
 }
 
