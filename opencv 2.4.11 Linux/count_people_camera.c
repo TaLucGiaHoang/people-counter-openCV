@@ -174,7 +174,7 @@ int min_area = 6000;
 int max_area = 70000;//640 * 480;	// < 30 000 - 50 000
 CvPoint center [50];
 
-int reject_small_and_large_object(IplImage* src, IplImage* dst, IplImage* circleImage, CvPoint* center, int /*&numOfCenters*/ *numOfCenters, CvMemStorage* storage);
+
 
 void update_mhi(IplImage* img, IplImage* dst, int diff_threshold) {
 
@@ -641,7 +641,7 @@ static void drawCoordinate(CvArr* img, CvPoint point, const CvFont* font, CvScal
 int reject_small_and_large_object(
 		IplImage* src, IplImage* dst,
 		IplImage* circleImage,
-		CvPoint* center, 
+		CvPoint* center, /* array of points */
 		int /*&numOfCenters*/ *numOfCenters,	/* output */
 		CvMemStorage* storage) 
 {
