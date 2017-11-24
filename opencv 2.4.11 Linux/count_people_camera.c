@@ -58,7 +58,17 @@ int mode = 2;	//HORIZONTAL MODE (DEFAULT)
 IplImage* tempImage = 0;
 IplImage* rawImage = 0, *hsvImage = 0; //yuvImage is for codebook method
 IplImage *ImaskCodeBook = 0, *ImaskCodeBookCC = 0;
+
 CvBGCodeBookModel *model = 0;
+int modMin = 50, modMax = 10;	//codebook configuration
+void configureBGCodeBookModel(CvBGCodeBookModel *model)
+{
+	//Set color thresholds to default values
+	model->cbBounds[0] = model->cbBounds[1] = model->cbBounds[2] = 10;	//10
+	model->modMin[0] = 70;	model->modMax[0] = 70;          //H
+	model->modMin[1] = 10;	model->modMax[1] = 40;	        //S
+	model->modMin[2] = modMin;	model->modMax[2] = modMax;	//V
+}
 const int NCHANNELS = 3;
 
 IplImage* circleImage = 0;
@@ -116,8 +126,8 @@ struct _Tracking* initCountLine(unsigned int count)
 {
 	Tracking* arr;
 	arr = (Tracking*)malloc(count);
-	int i;
-	for(i = 0; i<count; i++)
+//	printf("arr %p\n", arr);s
+	for(int i = 0; i<count; i++)
 	{
 		arr[i] = createTracking();
 	}
@@ -128,6 +138,7 @@ void releaseTracking (Tracking* track)
 {
 	if(track)
 		free(track);
+	track = NULL;
 }
 
 /////////////////////////////////////////////
@@ -143,26 +154,20 @@ CvRect track_window;
 CvBox2D track_box;
 void on_mouse(int event, int x, int y, int flags, void* param);
 
-void InitImages(CvSize sz);
 void ReleaseImages();
 
-int modMin = 50, modMax = 10;	//codebook configuration
+
 int h_min  = 10, h_max  = 155;	//hue mau sac
 int s_min  = 0,  s_max  = 255;	//saturation do tuong phan
 int v_min  = 0,  v_max  = 255;		//value do sang
 
 void threshold_trackbar(const char* name);
-void silhoutte_reduction(IplImage* src, IplImage* dst, int codeCvt);
 void control_trackbar(const char* name);
 void onTrackbarSlide(int n) {
 	cvSetCaptureProperty(capture, CV_CAP_PROP_POS_FRAMES, n);
 }
 
 CvFont g_font;
-
-//int update_period = 200, clear_peridod = 300;
-int update_duration = 6, clear_duration = 60;// seconds
-time_t start_update_time, start_clear_time, current_time;
 
 
 int poly1Hull0 = 0;
@@ -174,7 +179,7 @@ int min_area = 6000;
 int max_area = 70000;//640 * 480;	// < 30 000 - 50 000
 CvPoint center [50];
 
-
+int reject_small_and_large_object(IplImage* src, IplImage* dst, IplImage* circleImage, CvPoint* center, int /*&numOfCenters*/ *numOfCenters, CvMemStorage* storage);
 
 void update_mhi(IplImage* img, IplImage* dst, int diff_threshold) {
 
@@ -348,7 +353,7 @@ void on_mouse(int event, int x, int y, int flags, void* param)
 		selection.height = MIN(selection.height, rawImage->height);
 		selection.width -= selection.x;
 		selection.height -= selection.y;
-		printf("%d,%d w: %d h: %d \n", selection.x, selection.y, selection.width, selection.height);
+		printf("(%d,%d) %dx%d \n", selection.x, selection.y, selection.width, selection.height);
 	}
 
 	switch (event)
@@ -373,76 +378,91 @@ void on_mouse(int event, int x, int y, int flags, void* param)
  * ImaskCodeBookCC : IPL_DEPTH_8U, gray-scale image
  * circleImage     : IPL_DEPTH_8U, gray-scale image
  */
-void InitImages(CvSize sz)
+void InitImages(CvSize size)
 {
-	int i;
-	//	SILHOUTTE REDUCTION	
-	tempImage = cvCloneImage(rawImage);
+	if(rawImage)
+	{
+		//	SILHOUTTE REDUCTION
+		tempImage = cvCloneImage(rawImage);
 
-	// CODEBOOK METHOD ALLOCATION
-	hsvImage = cvCloneImage(rawImage);
-	cvZero(hsvImage);
-	ImaskCodeBook = cvCreateImage(cvGetSize(rawImage), IPL_DEPTH_8U, 1);
-	ImaskCodeBookCC = cvCreateImage(cvGetSize(rawImage), IPL_DEPTH_8U, 1);
-	cvSet(ImaskCodeBook, WHITE, NULL );
-	
-	circleImage = cvCreateImage(cvGetSize(rawImage), IPL_DEPTH_8U, 1);
+		// CODEBOOK METHOD ALLOCATION
+		hsvImage = cvCreateImage(size, IPL_DEPTH_8U, 3);//cvCloneImage(rawImage);
+		ImaskCodeBook = cvCreateImage(size, IPL_DEPTH_8U, 1);
+		ImaskCodeBookCC = cvCreateImage(size, IPL_DEPTH_8U, 1);
+		cvSet(ImaskCodeBook, WHITE, NULL );
 
-	silh = cvCreateImage(cvGetSize(rawImage), IPL_DEPTH_8U, 1);	// 8U, 1-channel
-	mhi = cvCreateImage(cvGetSize(rawImage), IPL_DEPTH_32F, 1);
-	cvZero(mhi); // clear MHI at the beginning
-	orient = cvCreateImage(cvGetSize(rawImage), IPL_DEPTH_32F, 1);
-	segmask = cvCreateImage(cvGetSize(rawImage), IPL_DEPTH_32F, 1);
-	mask = cvCreateImage(cvGetSize(rawImage), IPL_DEPTH_8U, 1);
+		circleImage = cvCreateImage(size, IPL_DEPTH_8U, 1);
 
-	if (buf == 0) {
-		buf = (IplImage**)malloc(N * sizeof(buf[0]));
-		memset(buf, 0, N * sizeof(buf[0]));
+		silh = cvCreateImage(size, IPL_DEPTH_8U, 1);	// 8U, 1-channel
+		mhi = cvCreateImage(size, IPL_DEPTH_32F, 1);	// 32F, 1-channel
+		cvZero(mhi); // clear MHI at the beginning
+		orient = cvCreateImage(size, IPL_DEPTH_32F, 1);
+		segmask = cvCreateImage(size, IPL_DEPTH_32F, 1);
+		mask = cvCreateImage(size, IPL_DEPTH_8U, 1);
 
+		if (buf == 0) {
+			buf = (IplImage**)malloc(N * sizeof(buf[0]));
+			memset(buf, 0, N * sizeof(buf[0]));
+		}
+		for (int i = 0; i < 4; i++) {	//4 images
+			cvReleaseImage(&buf[i]);
+			buf[i] = cvCreateImage(cvGetSize(rawImage), IPL_DEPTH_8U, 1); //cvCreateImage(size, IPL_DEPTH_8U, 1);
+			cvZero(buf[i]);
+		}
+
+		motion = cvCreateImage(size, IPL_DEPTH_8U, 3);//cvCloneImage(rawImage);
+		//cvZero(motion);
 	}
-	for (i = 0; i < 4; i++) {	//4 images
-		cvReleaseImage(&buf[i]);
-		buf[i] = cvCreateImage(cvGetSize(rawImage), IPL_DEPTH_8U, 1); //cvCreateImage(size, IPL_DEPTH_8U, 1);
-		cvZero(buf[i]);
-	}
+	else
+		printf("InitImages NULL input\n");
 
-	motion = cvCloneImage(rawImage);
-	cvZero(motion);
 }
 
 void ReleaseImages()
 {
-	cvReleaseImage(&tempImage);
-	
-	cvReleaseImage(&silh);
-	cvReleaseImage(&mhi);
-	cvReleaseImage(&orient);
-	cvReleaseImage(&segmask);
+	if(tempImage) cvReleaseImage(&tempImage);
+	if(silh) cvReleaseImage(&silh);
+	if(mhi)	cvReleaseImage(&mhi);
+	if(orient) cvReleaseImage(&orient);
+	if(segmask)	cvReleaseImage(&segmask);
 	/*for (int i = 0; i < 4; i++) {	//4 images
 		cvReleaseImage(&buf[i]);
 	}*/
 	if(motion)	cvReleaseImage(&motion);
-	cvReleaseImage(&hsvImage);
-	cvReleaseImage(&ImaskCodeBook);
-	cvReleaseImage(&ImaskCodeBookCC);
-
-	cvReleaseImage(&circleImage);
+	if(hsvImage) cvReleaseImage(&hsvImage);
+	if(ImaskCodeBook) cvReleaseImage(&ImaskCodeBook);
+	if(ImaskCodeBookCC)	cvReleaseImage(&ImaskCodeBookCC);
+	if(circleImage)	cvReleaseImage(&circleImage);
 }
 
-#define RECORD_DETAILS
+//#define RECORD_DETAILS
 CvVideoWriter* writer = 0;
 #ifdef RECORD_DETAILS
 CvVideoWriter *writer0 = 0, *writer1 = 0, *writer2 = 0, *writer3 = 0, *writer4 = 0;
 #endif
 void releaseAllVideos(void)
 {
-	cvReleaseVideoWriter(&writer);
+	if(writer)  cvReleaseVideoWriter(&writer);
 #ifdef RECORD_DETAILS
-	cvReleaseVideoWriter(&writer0);
-	cvReleaseVideoWriter(&writer1);
-	cvReleaseVideoWriter(&writer2);
-	cvReleaseVideoWriter(&writer3);
-	cvReleaseVideoWriter(&writer4);
+	if(writer0)	cvReleaseVideoWriter(&writer0);
+	if(writer1)	cvReleaseVideoWriter(&writer1);
+	if(writer2)	cvReleaseVideoWriter(&writer2);
+	if(writer3)	cvReleaseVideoWriter(&writer3);
+	if(writer4)	cvReleaseVideoWriter(&writer4);
+#endif
+}
+
+int createVideo(double fcc, double fps, CvSize sz)
+{
+	writer = cvCreateVideoWriter("PeopleCounter.avi", fcc, 24, sz, 1);
+
+	// record processing steps
+#ifdef RECORD_DETAILS
+	writer0 = cvCreateVideoWriter("foreground.avi", fcc, 24, sz, 1);
+	writer1 = cvCreateVideoWriter("connected-component.avi", fcc, 24, sz, 1);
+	writer2 = cvCreateVideoWriter("circle.avi", fcc, 24, sz, 1);
+	writer3 = cvCreateVideoWriter("motion.avi", fcc, 24, sz, 1);
+	writer4 = cvCreateVideoWriter("hsv.avi", fcc, 24, sz, 1);
 #endif
 }
 
@@ -468,26 +488,39 @@ int recordVideo(IplImage* img, CvVideoWriter* video)
 	return r;
 }
 
-void silhoutte_reduction(IplImage* src, IplImage* dst, int codeCvt )
+int silhoutte_reduction(IplImage* src, IplImage* dst, int codeCvt )
 {
-	if (codeCvt != CV_BGR2HSV)
-		cvCvtColor(src, src, codeCvt);
-	IplImage* h = cvCreateImage(cvGetSize(src), 8, 1);
-	IplImage* s = cvCreateImage(cvGetSize(src), 8, 1);
-	IplImage* v = cvCreateImage(cvGetSize(src), 8, 1);
-	cvSplit(src, h, s, v, 0);
+	int code;
+	CvSize size;
+	IplImage *h, *s, *v;
+
+	if(!src)
+		return -1;
+	if(!dst)
+		return -1;
+	if(src->nChannels != 3 || dst->nChannels != 3)
+		return -1;
 	
+	if (codeCvt != CV_BGR2HSV)  code = codeCvt;
+	else code = CV_BGR2HSV;
+	size = cvGetSize(src);
+	h = cvCreateImage(size, 8, 1);
+	s = cvCreateImage(size, 8, 1);
+	v = cvCreateImage(size, 8, 1);
+
+	cvCvtColor(src, dst, CV_BGR2HSV);
+	cvSplit(dst, h, s, v, 0);
 	cvThreshold(h, h, h_min, h_max, CV_THRESH_TOZERO);	//CV_THRESH_TOZERO = 3,  /* value = value > threshold ? value : 0           */
 	cvThreshold(h, h, h_max, h_max, CV_THRESH_TOZERO_INV);	//CV_THRESH_TRUNC = 2,  /* value = value > threshold ? threshold : value   */
 	cvThreshold(s, s, s_min, s_max, CV_THRESH_TOZERO);	//CV_THRESH_TOZERO_INV  =4,  /* value = value > threshold ? 0 : value           */
 	cvThreshold(s, s, s_max, s_max, CV_THRESH_TOZERO_INV);
 	cvThreshold(v, v, v_min, v_max, CV_THRESH_TOZERO);
 	cvThreshold(v, v, v_max, v_max, CV_THRESH_TOZERO_INV);
-
+	cvMerge(h, s, v, 0, dst);
 	cvReleaseImage(&h);
 	cvReleaseImage(&s);
 	cvReleaseImage(&v);
-	cvMerge(h, s, v, 0, dst);
+	return 0;
 }
 
 static void drawItem(CvArr* img, char* name, int value, CvPoint point, const CvFont* font, CvScalar color)
@@ -514,17 +547,16 @@ static void drawLines (CvArr* img, CvPoint pt1, CvPoint pt2, CvScalar color, int
  * mode1: draw vertical line
  * mode2: draw horizontal line
  */
-void mode1(IplImage* image)
+static void mode1(IplImage* image)
 {
 	CvScalar textColor = cvScalar(0, 0, 255, 0);    // red
 	drawLines(image, cvPoint(center_x, 0), cvPoint(center_x, CamHeight), CV_RGB(255, 0, 0), line_w, 0);
 	drawItem(image, "frame", nframes, cvPoint(0, 30), &g_font, textColor);
 	drawItem(image, "OUT", count_out, cvPoint(0, 60), &g_font, textColor);
 	drawItem(image, "IN", count_in, cvPoint(CamWidth - 90, 60), &g_font, textColor);
-
 }
 
-void mode2(IplImage* image)
+static void mode2(IplImage* image)
 {
 	CvScalar textColor = cvScalar(0, 0, 255, 0);    // red
 	drawLines(image, cvPoint(0, center_y), cvPoint(CamWidth, center_y), CV_RGB(255, 0, 0), 0, line_w);
@@ -533,53 +565,16 @@ void mode2(IplImage* image)
 	drawItem(image, "IN", count_in, cvPoint(0, CamHeight - 20), &g_font, textColor);
 }
 
-/*
- * Create control table to:
- * name = "Control"
- * - "update(s)"   : modify time to update codebook (in seconds)
- * - "clear(s)"    : modify time to clear codebook (in seconds)
- * - "poly1_hull0" : switch to Poly(1) or Hull(0) for cvSegmentFGMask function
- * - "min len" "max len"   : modify perimeter condition of object recognition (in pixels)
- * - "min area" "max area" : modify area condition of object recognition (in pixels)
- */
-void control_trackbar(const char* name)
+void displayMainWindow(const char* name, IplImage* image, int mode, int on1_off0)
 {
-	cvNamedWindow(name, CV_WINDOW_AUTOSIZE);
-	cvResizeWindow(name, 300, 540);
-	cvCreateTrackbar("update(s)", "Control", &update_duration, 120, NULL);	//seconds
-	cvCreateTrackbar("clear(s)", "Control", &clear_duration, 5*60, NULL);		//seconds
-	cvCreateTrackbar("poly1_hull0", "Control", &poly1Hull0, 1, NULL);
-	cvCreateTrackbar("width", "Control", &line_w, 80, NULL);
-	//cvCreateTrackbar("duration (ms)", "Control", &duration, 2000, NULL);
-	//cvCreateTrackbar("seg_thresh (ms)", "Control", &seg_thresh, 2000, NULL);
-	cvCreateTrackbar("min len", "Control", &min_len, 10000, NULL);
-	cvCreateTrackbar("max len", "Control", &max_len, 10000, NULL);
-	cvCreateTrackbar("min area", "Control", &min_area, 320*240, NULL);
-	cvCreateTrackbar("max area", "Control", &max_area, 480*640, NULL);
-
+	// draw information
+	if (mode == 1)	mode1(image);	 //VERTICAL MODE
+	if (mode == 2)	mode2(image);		//HORIZONTAL MODE
+	// display main window
+	if (on1_off0)	cvShowImage(name, image);
+	else cvDestroyWindow(name);
 }
 
-/*
- * Create threshold table to:
- * name = "Set YUV Background"
- * - "modMin" "modMax" : modify max/min of codebook configuration
- * - "h_min" "h_max"   : modify max/min threshold on H-plane
- * - "s_min" "s_max"   : modify max/min threshold on S-plane
- * - "v_min" "v_max"   : modify max/min threshold on V-plane
- */
-void threshold_trackbar(const char* name)
-{
-	cvNamedWindow(name , CV_WINDOW_AUTOSIZE);
-	cvResizeWindow(name, 260, 450);
-	cvCreateTrackbar("modMin", name, &modMin, 255, NULL);
-	cvCreateTrackbar("modMax", name, &modMax, 255, NULL);
-	cvCreateTrackbar("h_min", name, &h_min, 255, NULL);
-	cvCreateTrackbar("h_max", name, &h_max, 255, NULL);
-	cvCreateTrackbar("s_min", name, &s_min, 255, NULL);
-	cvCreateTrackbar("s_max", name, &s_max, 255, NULL);
-	cvCreateTrackbar("v_min", name, &v_min, 255, NULL);
-	cvCreateTrackbar("v_max", name, &v_max, 255, NULL);
-}
 
 /*
  * Check perimeter
@@ -623,25 +618,26 @@ static CvPoint calcMomentCenterPoint(IplImage* image, CvRect rect)
 	cvResetImageROI(image);
 	return center;
 }
-/*
- * Filter: reject too small and too large object
- * Return -1 if false
- */
+
 
 /*
  *
  */
 static void drawCoordinate(CvArr* img, CvPoint point, const CvFont* font, CvScalar color)
 {
-			char text[50];
-			sprintf(text, "%d,%d", point.x, point.y);
-			cvPutText(img, text, point, font, color);
+	char text[50];
+	sprintf(text, "%d,%d", point.x, point.y);
+	cvPutText(img, text, point, font, color);
 }
 
+/*
+ * Filter: reject too small and too large object
+ * Return -1 if false
+ */
 int reject_small_and_large_object(
 		IplImage* src, IplImage* dst,
 		IplImage* circleImage,
-		CvPoint* center, /* array of points */
+		CvPoint* center, 
 		int /*&numOfCenters*/ *numOfCenters,	/* output */
 		CvMemStorage* storage) 
 {
@@ -724,11 +720,11 @@ int detect_object(
 	int index_of_detected_object,
 	double exist_time	//	exist_time < line_w/2 ,  exist_time ~= update
 ) {
-	int i;
+
 	int _index = index_of_detected_object;	
 	bool _isDetected = false;
 	
-	for (i = 0; i < num_of_pixel_on_line; i++) {
+	for (int i = 0; i < num_of_pixel_on_line; i++) {
 		if (track_line[i].value) {	//kiem tra cac diem cu vat da di qua
 			//if (useAVIfile) {
 				track_line[i].time_count += 1;
@@ -750,7 +746,7 @@ int detect_object(
 	if (center_of_detect_line - line_w < detectable_direction  && detectable_direction < center_of_detect_line + line_w) {
 		_index = object_center;	//luu toa do diem moi bi phat hien
 		if (track_line[_index].value == false) {
-			for (i = -saiso; i < saiso; i++) {
+			for (int i = -saiso; i < saiso; i++) {
 				if ((_index + i <0) || (_index + i >= num_of_pixel_on_line))
 					continue;	// tranh truong hop bi loi cac diem nam ben ngoai khung hinh
 				
@@ -812,42 +808,218 @@ int selectDisplay (IplImage* display, int mode)
 
 int window_mode = 0;
 bool pause = false;
-bool auto_update = false;
-bool update = false, clear = false;
 bool temp_image = false;
 bool color_window = true;
+bool auto_update = false;
+bool update = false, clear = false;
 
-/*
- *
- */
-void updateBackgroundCodeBook (void)
+
+//int update_period = 200, clear_peridod = 300;
+int update_duration = 6, clear_duration = 60;// seconds
+time_t start_update_time, start_clear_time, current_time;
+
+bool updateBackgroundCodeBook(bool update_flag, CvBGCodeBookModel* model, const CvArr* image, time_t *start)
+{
+	bool flag = update_flag;
+	if(flag)
+	{
+		flag = false;
+		cvBGCodeBookUpdate(model, image, cvRect(0,0,0,0), 0);
+		//start_update_time = (double)clock() / CLOCKS_PER_SEC;
+		*start = (double)clock() / CLOCKS_PER_SEC;
+		printf("update codebook\n");		
+	}
+	return flag;
+}
+
+bool clearBackgroundCodeBook(bool clear_flag, CvBGCodeBookModel* model, const CvArr* image, time_t *start)
+{
+	bool flag = clear_flag;
+	if(flag)
+	{
+		flag = false;
+		cvBGCodeBookClearStale(model, model->t / 2, cvRect(0,0,0,0), 0);
+		//start_clear_time = (double)clock() / CLOCKS_PER_SEC;
+		*start = (double)clock() / CLOCKS_PER_SEC;
+		printf("clear codebook\n");	
+	}
+	return flag;
+}
+
+void trainBackgroundCodeBook(CvBGCodeBookModel* model, const CvArr* image, unsigned int count, unsigned int max_count)
+{
+	if(count < max_count){
+		cvBGCodeBookUpdate(model, image, cvRect(0,0,0,0), 0);
+		printf("training update codebook\n");
+	}
+
+	if(count == max_count){
+		cvBGCodeBookClearStale(model, model->t / 2, cvRect(0,0,0,0), 0);
+		printf("training clear codebook\n");
+	}
+	start_update_time = (double)clock() / CLOCKS_PER_SEC;
+	start_clear_time = (double)clock() / CLOCKS_PER_SEC;
+}
+void autoUpdateBackgroundCodeBook (void)
 {
 	current_time = (double)clock() / CLOCKS_PER_SEC; // get current time in seconds
 	if (current_time - start_update_time >= update_duration)
 	{
 		start_update_time = (double)clock() / CLOCKS_PER_SEC;
 		update = true;
-		printf("update\n");
 	}
 
 	if (current_time - start_clear_time >= clear_duration)
 	{
 		start_clear_time = (double)clock() / CLOCKS_PER_SEC;
 		clear = true;
-		printf("clear\n");
 	}
+}
+
+/*
+ * Create control table to:
+ * name = "Control"
+ * - "update(s)"   : modify time to update codebook (in seconds)
+ * - "clear(s)"    : modify time to clear codebook (in seconds)
+ * - "poly1_hull0" : switch to Poly(1) or Hull(0) for cvSegmentFGMask function
+ * - "min len" "max len"   : modify perimeter condition of object recognition (in pixels)
+ * - "min area" "max area" : modify area condition of object recognition (in pixels)
+ */
+void control_trackbar(const char* name)
+{
+	cvNamedWindow(name, CV_WINDOW_AUTOSIZE);
+	cvResizeWindow(name, 300, 540);
+	cvCreateTrackbar("update(s)", "Control", &update_duration, 120, NULL);	//seconds
+	cvCreateTrackbar("clear(s)", "Control", &clear_duration, 5*60, NULL);		//seconds
+	cvCreateTrackbar("poly1_hull0", "Control", &poly1Hull0, 1, NULL);
+	cvCreateTrackbar("width", "Control", &line_w, 80, NULL);
+	//cvCreateTrackbar("duration (ms)", "Control", &duration, 2000, NULL);
+	//cvCreateTrackbar("seg_thresh (ms)", "Control", &seg_thresh, 2000, NULL);
+	cvCreateTrackbar("min len", "Control", &min_len, 10000, NULL);
+	cvCreateTrackbar("max len", "Control", &max_len, 10000, NULL);
+	cvCreateTrackbar("min area", "Control", &min_area, 320*240, NULL);
+	cvCreateTrackbar("max area", "Control", &max_area, 480*640, NULL);
+}
+
+/*
+ * Create threshold table to:
+ * name = "Set YUV Background"
+ * - "modMin" "modMax" : modify max/min of codebook configuration
+ * - "h_min" "h_max"   : modify max/min threshold on H-plane
+ * - "s_min" "s_max"   : modify max/min threshold on S-plane
+ * - "v_min" "v_max"   : modify max/min threshold on V-plane
+ */
+void threshold_trackbar(const char* name)
+{
+	cvNamedWindow(name , CV_WINDOW_AUTOSIZE);
+	cvResizeWindow(name, 260, 450);
+	cvCreateTrackbar("modMin", name, &modMin, 255, NULL);
+	cvCreateTrackbar("modMax", name, &modMax, 255, NULL);
+	cvCreateTrackbar("h_min", name, &h_min, 255, NULL);
+	cvCreateTrackbar("h_max", name, &h_max, 255, NULL);
+	cvCreateTrackbar("s_min", name, &s_min, 255, NULL);
+	cvCreateTrackbar("s_max", name, &s_max, 255, NULL);
+	cvCreateTrackbar("v_min", name, &v_min, 255, NULL);
+	cvCreateTrackbar("v_max", name, &v_max, 255, NULL);
 }
 
 static void saveAllImages(void)
 {
-	cvSaveImage("ImaskCodeBook.jpg", ImaskCodeBook, 0);
-	cvSaveImage("ImaskCodeBookCC.jpg", ImaskCodeBookCC, 0);
-	cvSaveImage("circleImage.jpg", circleImage, 0);
-	cvSaveImage("hsvImage.jpg", hsvImage, 0);
-	cvSaveImage("rawImage.jpg", rawImage, 0);
+	if(ImaskCodeBook) cvSaveImage("ImaskCodeBook.jpg", ImaskCodeBook, 0);
+	if(ImaskCodeBookCC)	cvSaveImage("ImaskCodeBookCC.jpg", ImaskCodeBookCC, 0);
+	if(circleImage)	cvSaveImage("circleImage.jpg", circleImage, 0);
+	if(hsvImage)	cvSaveImage("hsvImage.jpg", hsvImage, 0);
+	if(rawImage)	cvSaveImage("rawImage.jpg", rawImage, 0);
 }
 
-void controller(char key)
+void printHelp(void)
+{
+	printf("Usage:\n"
+	        "\t- a : switch on/off auto update\n"
+			"\t- c : clear codebook\n"
+			"\t- u : switch on/off auto update\n"
+			"\t- 1 : foreground image\n"
+			"\t- 2 : connected component image\n"
+			"\t- 3 : circle image\n"
+			"\t- 4 : motion image\n"
+			"\t- 5 : hsv image\n"
+			"\t- 6 : color image\n"
+			"\t- s : save images\n"
+			"\t- r : reset\n"
+			"\t- t : control tables\n"
+			"\t- q : Process Window\n"
+			"\t- w : display on/off main window\n"
+			"\t- v : vertical\n"
+			"\t- h : horizontal\n"
+			"\t- p : pause\n"
+			"\t- 'ESC' : exit\n"	);
+}
+
+void controllerPrint(char key)
+{
+	switch (key) {
+		printf("key: %c\t", key);
+	case 'l':
+		printHelp();
+		break;
+	case 'a':
+		printf("auto update\n");
+		break;
+	case 'c':
+		// printf("clear codebook\n");
+		break;
+	case 'u':
+		// printf("update codebook\n");
+		break;
+	case '1':
+		printf("foreground image\n");
+		break;
+	case '2':
+		printf("connected component image\n");
+		break;
+	case '3':
+		printf("circle image\n");
+		break;
+	case '4':
+		printf("motion image\n");
+		break;
+	case '5':
+		printf("hsv image\n");
+		break;
+	case '6':
+		printf("color image\n");
+		break;
+	case 's':
+		printf("save frame\n");
+		break;
+	case 'r':
+		printf("reset\n");
+		break;
+	case 't':
+		printf("control tables\n");
+		break;
+	case 'q':
+		printf("Process Window\n");
+		break;
+	case 'w':
+		printf("color_window\n");
+		break;
+	case 'v':
+		printf("mode=vertical\n");
+		break;
+	case 'h':	//DEFAULT
+		printf("mode=horizontal\n");
+		break;
+	case 'p':
+		printf("pause\n");
+		break;
+	case 27:
+		printf("exit\n");
+		break;
+	}
+}
+
+void controllerExecute(char key)
 {
 	switch (key) {
 		printf("key: %c\n", key);
@@ -857,39 +1029,39 @@ void controller(char key)
 		break;
 	case 'c':
 		clear = true;
-		printf("clear codebook\n");
+//		printf("clear codebook\n");
 		break;
 	case 'u':
 		update = true;
-		printf("update codebook\n");
+//		printf("update codebook\n");
 		break;
 	case '1':
 		window_mode = 1;
-		printf("foreground image\n");
+//		printf("foreground image\n");
 		break;
 	case '2':
 		window_mode = 2;
-		printf("connected component image\n");
+//		printf("connected component image\n");
 		break;
 	case '3':
 		window_mode = 3;
-		printf("circle image\n");
+//		printf("circle image\n");
 		break;
 	case '4':
 		window_mode = 4;
-		printf("motion image\n");
+//		printf("motion image\n");
 		break;
 	case '5':
 		window_mode = 5;
-		printf("hsv image\n");
+//		printf("hsv image\n");
 		break;
 	case '6':
 		window_mode = 0;
-		printf("color image\n");
+//		printf("color image\n");
 		break;
 	case 's':
 		saveAllImages();
-		printf("save frame\n");
+//		printf("save frame\n");
 		break;
 	case 'r':
 		cvBGCodeBookClearStale(model, 0, cvRect(0,0,0,0), 0 );
@@ -897,7 +1069,7 @@ void controller(char key)
 		ReleaseImages();
 		nframes = 0;
 		releaseTracking(countOnLine);
-		printf("reset\n");
+//		printf("reset\n");
 		break;
 	case 't':
 		control_trackbar("Control");
@@ -905,34 +1077,35 @@ void controller(char key)
 		break;
 	case 'q':
 		temp_image = !temp_image;
-		printf("Process Window\n");
+//		printf("Process Window\n");
 		break;
 	case 'w':
 		color_window = !color_window;
-		printf("color_window = %d\n", color_window);
+//		printf("color_window = %d\n", color_window);
 		break;
 	case 'v':
 		mode = 1;
 		releaseTracking(countOnLine);
 		firstInMode = true;
-		printf("mode: %d-vertical\n", mode);
+//		printf("mode: %d-vertical\n", mode);
 		break;
 	case 'h':	//DEFAULT
 		mode = 2;
 		releaseTracking(countOnLine);
 		firstInMode = true;
-		printf("mode: %d-horizontal\n", mode);
+//		printf("mode: %d-horizontal\n", mode);
 		break;
 	case 'p':
 		pause = !pause;
-		printf("pause = %d\n",pause);
+//		printf("pause = %d\n",pause);
 		break;
 	}
 }
 
 int main(int argc, char *argv[]) {
 
-	//capture = cvCreateCameraCapture(0);
+	CvSize sz;
+	capture = cvCreateCameraCapture(0);
 	if (capture){
 		// Capture from Camera
 		//cvSetCaptureProperty(capture, CV_CAP_PROP_FRAME_WIDTH, CamWidth);
@@ -948,6 +1121,9 @@ int main(int argc, char *argv[]) {
 		printf("fps: %d\n", fps);
 		cvSetCaptureProperty(capture, CV_CAP_PROP_FRAME_WIDTH, 320);
 		cvSetCaptureProperty(capture, CV_CAP_PROP_FRAME_HEIGHT, 240);
+
+		rawImage = cvQueryFrame(capture);
+		sz = cvGetSize(rawImage);
 	}
 	nframes = 0;
 	nframesToLearnBG = LEARNING_TIME;
@@ -960,12 +1136,16 @@ int main(int argc, char *argv[]) {
 //	bool trackbar = true;
 //	bool save = false;
 
+	// Initialize global variables
 	g_font = cvFont(2.0, 2);
+	CamWidth = (int)cvGetCaptureProperty(capture, CV_CAP_PROP_FRAME_WIDTH);
+	CamHeight = (int)cvGetCaptureProperty(capture, CV_CAP_PROP_FRAME_HEIGHT);
+	center_x = CamWidth / 2;
+	center_y = CamHeight / 2;
 
-	cvNamedWindow("Camera", CV_WINDOW_AUTOSIZE);
-	cvSetMouseCallback("Camera", on_mouse, 0);
-	control_trackbar("Control");
-	threshold_trackbar("Set YUV Background");
+//	cvSetMouseCallback("Camera", on_mouse, 0);
+//	control_trackbar("Control");
+//	threshold_trackbar("Set YUV Background");
 
 	int fcc = CV_FOURCC('D', 'I', 'V', '3');
 
@@ -978,96 +1158,58 @@ int main(int argc, char *argv[]) {
 		}
 
 		if (nframes == 1) {
-			CvSize sz = cvGetSize(rawImage);
+
 			InitImages(sz);
 
-			//Set color thresholds to default values
-			model->cbBounds[0] = model->cbBounds[1] = model->cbBounds[2] = 10;	//10
-			model->modMin[0] = 70;	model->modMax[0] = 70;//H
-			model->modMin[1] = 10;	model->modMax[1] = 40;	//S
-			model->modMin[2] = modMin;	model->modMax[2] = modMax;	//V
+			configureBGCodeBookModel(model);
 
 			selection.height = sz.height/2;
 			selection.width = sz.width/2;
 
-			CamWidth = (int)cvGetCaptureProperty(capture, CV_CAP_PROP_FRAME_WIDTH);
-			CamHeight = (int)cvGetCaptureProperty(capture, CV_CAP_PROP_FRAME_HEIGHT);
-			center_x = CamWidth / 2;
-			center_y = CamHeight / 2;
-
 			count_in = 0;
 			count_out = 0;
 
-			if (writer) {
-				cvReleaseVideoWriter(&writer);
-				printf("start record new video\n");
-			}
-			writer = cvCreateVideoWriter("Video Record.avi", fcc, 24, sz, 1);
-
-			// record processing steps
-#ifdef RECORD_DETAILS
-			writer0 = cvCreateVideoWriter("foreground.avi", fcc, 24, sz, 1);
-			writer1 = cvCreateVideoWriter("connected component.avi", fcc, 24, sz, 1);
-			writer2 = cvCreateVideoWriter("circle.avi", fcc, 24, sz, 1);
-			writer3 = cvCreateVideoWriter("motion.avi", fcc, 24, sz, 1);
-			writer4 = cvCreateVideoWriter("hsv.avi", fcc, 24, sz, 1);
-#endif
+			createVideo(fcc, 24, sz);
 		}
 
 		if (rawImage)
 		{
-			cvCvtColor(rawImage, hsvImage, CV_BGR2HSV);		//BGR -> HSV
-			silhoutte_reduction(hsvImage, hsvImage, CV_BGR2HSV);
+			silhoutte_reduction(rawImage, hsvImage, CV_BGR2HSV);	//BGR -> HSV
 
-			if (update || (nframes - 1 < nframesToLearnBG)) {
-				cvBGCodeBookUpdate(model, hsvImage, cvRect(0,0,0,0), 0);
-				update = false;										//update codebook
-				start_update_time = (double)clock() / CLOCKS_PER_SEC;
-			}
+			if(nframes - 1 <= nframesToLearnBG)
+				trainBackgroundCodeBook(model, hsvImage, nframes - 1, nframesToLearnBG);
 
-			if (clear || (nframes - 1 == nframesToLearnBG)) {
-				cvBGCodeBookClearStale(model, model->t / 2, cvRect(0,0,0,0), 0);
-				clear = false;										//clear codebook
-				start_clear_time = (double)clock() / CLOCKS_PER_SEC;
-			}
-
-			//Find the foreground if any
-			if (nframes - 1 >= nframesToLearnBG)
-			{
-
-				// Find foreground by codebook method
-				cvBGCodeBookDiff(model, hsvImage, ImaskCodeBook, cvRect(0,0,0,0));
-				int numOfObject = 50;
-				//reject_small_and_large_object(ImaskCodeBook, ImaskCodeBook, circleImage, center, numOfObject, storage);
-				// This part just to visualize bounding boxes and centers if desired
-				//cvCopy(ImaskCodeBook, ImaskCodeBookCC);
-				//cvSegmentFGMask(ImaskCodeBookCC, poly1Hull0, 4.0, 0, cvPoint(0, 0));
-				reject_small_and_large_object(ImaskCodeBook, ImaskCodeBookCC, circleImage, center, &numOfObject, storage);
-				update_mhi(circleImage, motion, 50);
-			}
-
-			if (select_object && selection.width > 0 && selection.height > 0)
-			{
-				cvRectangleR(rawImage, selection, cvScalar(0, 255, 255, 0), 3, 8, 0);
-				cvSetImageROI(rawImage, selection);
-				cvXorS(rawImage, cvScalarAll(125), rawImage, 0);
-				cvResetImageROI(rawImage);
-			}
-
-			// show on screen
-			window_mode = selectDisplay(tempImage, window_mode);
-			if (temp_image)	cvShowImage("Process Window", tempImage);
-			else cvDestroyWindow("Process Window");
+//
+//			//Find the foreground if any
+//			if (nframes - 1 >= nframesToLearnBG)
+//			{
+//
+//				// Find foreground by codebook method
+//				cvBGCodeBookDiff(model, hsvImage, ImaskCodeBook, cvRect(0,0,0,0));
+//				int numOfObject = 50;
+//				//reject_small_and_large_object(ImaskCodeBook, ImaskCodeBook, circleImage, center, numOfObject, storage);
+//				// This part just to visualize bounding boxes and centers if desired
+//				//cvCopy(ImaskCodeBook, ImaskCodeBookCC);
+//				//cvSegmentFGMask(ImaskCodeBookCC, poly1Hull0, 4.0, 0, cvPoint(0, 0));
+//				reject_small_and_large_object(ImaskCodeBook, ImaskCodeBookCC, circleImage, center, &numOfObject, storage);
+//				update_mhi(circleImage, motion, 50);
+//			}
+//
+//			if (select_object && selection.width > 0 && selection.height > 0)
+//			{
+//				cvRectangleR(rawImage, selection, cvScalar(0, 255, 255, 0), 3, 8, 0);
+//				cvSetImageROI(rawImage, selection);
+//				cvXorS(rawImage, cvScalarAll(125), rawImage, 0);
+//				cvResetImageROI(rawImage);
+//			}
+//
+//			// show on screen
+//			window_mode = selectDisplay(tempImage, window_mode);
+//			if (temp_image)	cvShowImage("Process Window", tempImage);
+//			else cvDestroyWindow("Process Window");
 
 
-			// draw information
-			if (mode == 1)	mode1(rawImage);	 //VERTICAL MODE
-
-			if (mode == 2)	mode2(rawImage);		//HORIZONTAL MODE
-
-			if (color_window)	cvShowImage("Camera", rawImage);
-			else cvDestroyWindow("Camera");
-
+			displayMainWindow("Camera", rawImage, mode, color_window);
 			/* Record video */
 			recordVideo(rawImage, writer);          // BGR
 #ifdef RECORD_DETAILS
@@ -1079,7 +1221,9 @@ int main(int argc, char *argv[]) {
 #endif
 
 			if (auto_update) {
-				updateBackgroundCodeBook();
+				autoUpdateBackgroundCodeBook();
+				update = updateBackgroundCodeBook(update, model, hsvImage, &start_update_time);
+				clear = clearBackgroundCodeBook(clear, model, model->t / 2, &start_clear_time);
 			}
 
 		}
@@ -1091,13 +1235,16 @@ int main(int argc, char *argv[]) {
 
 		// User input:
 		int key = cvWaitKey(10);
-		//key = tolower(key);
-		if (key == 27)	 break;	//end processing on ESC
-		controller(key);
+		controllerPrint(key);
+		controllerExecute(key);
 
+		if ((char)key == 27){
+			break;	//end processing on 'ESC'=27
+		}
 	}
 
 	releaseAllVideos();
 
 	return 0;
 }
+
