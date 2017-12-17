@@ -1,6 +1,6 @@
 #include <opencv/cv.h>
 #include <opencv/highgui.h>
-//#include <opencv/cvaux.h>// nho uncomment
+//#include <opencv/cvaux.h>// old version
 #include <string.h>
 #include <time.h>
 
@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <ctype.h>
-#include <stdbool.h>  // true false
+#include <stdbool.h>  // MACRO: true false 
 //#include <opencv2/video/background_segm.hpp>
 
 
@@ -184,11 +184,11 @@ static int detect_object(
 	int index_of_detected_object,
 	double exist_time	//	exist_time < line_w/2 ,  exist_time ~= update
 ) {
-
+	int i;
 	int _index = index_of_detected_object;	
 	bool _isDetected = false;
 	
-	for (int i = 0; i < num_of_pixel_on_line; i++) {
+	for ( i = 0; i < num_of_pixel_on_line; i++) {
 		if (track_line[i].value) {	//kiem tra cac diem cu vat da di qua
 			//if (useAVIfile) {
 				track_line[i].time_count += 1;
@@ -210,7 +210,7 @@ static int detect_object(
 	if (center_of_detect_line - line_w < detectable_direction  && detectable_direction < center_of_detect_line + line_w) {
 		_index = object_center;	//luu toa do diem moi bi phat hien
 		if (track_line[_index].value == false) {
-			for (int i = -saiso; i < saiso; i++) {
+			for ( i = -saiso; i < saiso; i++) {
 				if ((_index + i <0) || (_index + i >= num_of_pixel_on_line))
 					continue;	// tranh truong hop bi loi cac diem nam ben ngoai khung hinh
 				
@@ -263,7 +263,8 @@ IplImage** createIplImageBuf(const int numOfBuf, CvSize size)
 
 void releaseIplImageBuf(const int numOfBuf)
 {
-	for (int i = 0; i < numOfBuf; i++) 	//4 images
+	int i;
+	for ( i = 0; i < numOfBuf; i++) 	//4 images
 		if(buf[i])
 			cvReleaseImage(&buf[i]);
 	
