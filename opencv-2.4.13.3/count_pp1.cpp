@@ -2,6 +2,7 @@
 #include "opencv2/imgproc/imgproc.hpp"
 #include "opencv2/video/background_segm.hpp"
 #include "opencv2/highgui/highgui.hpp"
+#include "opencv2/video/tracking.hpp" // Kalman Filter
 #include <stdio.h>
 
 #define DEBUG_PRINT
@@ -163,11 +164,11 @@ static void refineSegments_1(const Mat& img, Mat& mask, vector<vector<Point> > &
 			vector<Point> c ;//= contours_poly[i];
 			approxPolyDP( Mat(contours[i]), c, 3, true ); //! approximates contour or a curve using Douglas-Peucker algorithm
 			
-			if(rejectSmallAndLargeObject(c,
-				640, 5000,  /* min_len, max_len*/
-				6000,70000 /* min_area, max_area*/
-				) == false)
-				continue; // skip this contour							
+			// if(rejectSmallAndLargeObject(c,
+				// 640, 5000,  /* min_len, max_len*/
+				// 6000,70000 /* min_area, max_area*/
+				// ) == false)
+				// continue; // skip this contour							
 			contours_poly.push_back(c);
 		}
 		printf("contours_poly.size = %d\n", (int)contours_poly.size());
@@ -222,14 +223,14 @@ static void drawBoundaries( Mat& img,
 		{
 			Scalar color = Scalar( rng.uniform(0, 255), rng.uniform(0,255), rng.uniform(0,255) );
 			drawContours( img, contours, i, color, 1, 8, vector<Vec4i>(), 0, Point() );
-			rectangle( img, boundRect[i].tl(), boundRect[i].br(), color, 2, 8, 0 );
-			circle( img, center[i], (int)radius[i], color, 2, 8, 0 );
+			// rectangle( img, boundRect[i].tl(), boundRect[i].br(), color, 2, 8, 0 );
+			circle( img, center[i], 5 /*(int)radius[i]*/, color, 2, 8, 0 );
 		}
 	} 
 #ifdef DEBUG_PRINT
-	else {	
-		printf("[drawBounding]Error contours.size() == 0\n") ;
-	}
+	// else {	
+		// printf("[drawBounding]Error contours.size() == 0\n") ;
+	// }
 #endif
 
 #ifdef DEBUG_VIDEO
@@ -298,7 +299,7 @@ void refineSegments(const Mat& img, Mat& mask, Mat& dst,
 			Scalar color = Scalar( rng.uniform(0, 255), rng.uniform(0,255), rng.uniform(0,255) );
 			drawContours( dst, contours_poly, i, color, 1, 8, vector<Vec4i>(), 0, Point() );
 			rectangle( dst, boundRect[i].tl(), boundRect[i].br(), color, 2, 8, 0 );
-			circle( dst, center[i], (int)radius[i], color, 2, 8, 0 );
+			circle( dst, center[i], 5 /*(int)radius[i]*/, color, 2, 8, 0 );
 		}
 		
 		// Save detected
@@ -340,6 +341,15 @@ void drawInfo (Mat& img)
 	drawItem(img, "IN", 2/* count_in */, Point(0, 480 - 20), 0, color );	
 	
 }
+
+/* Kalman Filter */
+KalmanFilter KF(2, 1, 0);
+Mat state(2, 1, CV_32F); /* (phi, delta_phi) */
+Mat processNoise(2, 1, CV_32F);
+Mat measurement = Mat::zeros(1, 1, CV_32F);
+	
+	
+	
 int main(int argc, const char** argv)
 {
     help();
@@ -424,10 +434,10 @@ int main(int argc, const char** argv)
 		if(contours_poly.size() > 0)
 		{
 			getBoundaries(contours_poly, boundRect, center, radius);	
-			drawBoundaries(img, contours_poly , boundRect, center, radius);
+			
 					
 		}
-		
+		drawBoundaries(img_KF, contours_poly , boundRect, center, radius);
 		
 		// refineSegments(img, openclose, contour_out,	boundRect, center, radius);
 			
